@@ -33,6 +33,13 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * An {@link OutputStream} that starts buffering to a byte array, but switches to file buffering
  * once the data reaches a configurable size.
  *
+ * <p>When this stream creates a temporary file, it restricts the file's permissions to the current
+ * user or, in the case of Android, the current app. If that is not possible (as is the case under
+ * the very old Android Ice Cream Sandwich release), then this stream throws an exception instead of
+ * creating a file that would be more accessible. (This behavior is new in Guava 32.0.0. Previous
+ * versions would create a file that is more accessible, as discussed in <a
+ * href="https://github.com/google/guava/issues/2575">CVE-2023-2976</a>.)
+ *
  * <p>Temporary files created by this stream may live in the local filesystem until either:
  *
  * <ul>
@@ -55,7 +62,6 @@ public final class FileBackedOutputStream extends OutputStream {
   private final int fileThreshold;
   private final boolean resetOnFinalize;
   private final ByteSource source;
-  @Nullable private final File parentDirectory;
 
   @GuardedBy("this")
   private OutputStream out;
@@ -102,14 +108,8 @@ public final class FileBackedOutputStream extends OutputStream {
    *     ByteSource} returned by {@link #asByteSource} is finalized.
    */
   public FileBackedOutputStream(int fileThreshold, boolean resetOnFinalize) {
-    this(fileThreshold, resetOnFinalize, null);
-  }
-
-  private FileBackedOutputStream(
-      int fileThreshold, boolean resetOnFinalize, @Nullable File parentDirectory) {
     this.fileThreshold = fileThreshold;
     this.resetOnFinalize = resetOnFinalize;
-    this.parentDirectory = parentDirectory;
     memory = new MemoryOutput();
     out = memory;
 
@@ -218,7 +218,7 @@ public final class FileBackedOutputStream extends OutputStream {
   @GuardedBy("this")
   private void update(int len) throws IOException {
     if (file == null && (memory.getCount() + len > fileThreshold)) {
-      File temp = File.createTempFile("FileBackedOutputStream", null, parentDirectory);
+      File temp = TempFileCreator.INSTANCE.createTempFile("FileBackedOutputStream");
       if (resetOnFinalize) {
         // Finalizers are not guaranteed to be called on system shutdown;
         // this is insurance.

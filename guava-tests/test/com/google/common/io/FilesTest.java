@@ -16,7 +16,13 @@
 
 package com.google.common.io;
 
+import static com.google.common.base.StandardSystemProperty.JAVA_IO_TMPDIR;
+import static com.google.common.base.StandardSystemProperty.OS_NAME;
 import static com.google.common.truth.Truth.assertThat;
+import static java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE;
+import static java.nio.file.attribute.PosixFilePermission.OWNER_READ;
+import static java.nio.file.attribute.PosixFilePermission.OWNER_WRITE;
+import static org.junit.Assert.assertThrows;
 
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
@@ -33,6 +39,8 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel.MapMode;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -357,12 +365,39 @@ public class FilesTest extends IoTestCase {
     }
   }
 
-  public void testCreateTempDir() {
+  @SuppressWarnings("deprecation") // tests of a deprecated method
+  public void testCreateTempDir() throws IOException {
+    if (JAVA_IO_TMPDIR.value().equals("/sdcard")) {
+      assertThrows(IllegalStateException.class, Files::createTempDir);
+      return;
+    }
     File temp = Files.createTempDir();
-    assertTrue(temp.exists());
-    assertTrue(temp.isDirectory());
-    assertThat(temp.listFiles()).isEmpty();
-    assertTrue(temp.delete());
+    try {
+      assertThat(temp.exists()).isTrue();
+      assertThat(temp.isDirectory()).isTrue();
+      assertThat(temp.listFiles()).isEmpty();
+      File child = new File(temp, "child");
+      assertThat(child.createNewFile()).isTrue();
+      assertThat(child.delete()).isTrue();
+
+      if (!isAndroid() && !isWindows()) {
+        PosixFileAttributes attributes =
+            java.nio.file.Files.getFileAttributeView(temp.toPath(), PosixFileAttributeView.class)
+                .readAttributes();
+        assertThat(attributes.permissions())
+            .containsExactly(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE);
+      }
+    } finally {
+      assertThat(temp.delete()).isTrue();
+    }
+  }
+
+  private static boolean isAndroid() {
+    return System.getProperty("java.runtime.name", "").contains("Android");
+  }
+
+  private static boolean isWindows() {
+    return OS_NAME.value().startsWith("Windows");
   }
 
   public void testMove() throws IOException {
